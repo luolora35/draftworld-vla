@@ -178,3 +178,60 @@ scripts/single_ur5_joystick_collect
 .cursor/
 .vscode/
 scripts/ur5/
+# local IDE
+.idea/
+
+# generated outputs
+outputs/
+converted/
+jepa_data/
+jepa_logs/
+jepa_results/
+checkpoints/
+wandb/
+runs/
+
+# model/data/log artifacts
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.npz
+*.npy
+*.pkl
+*.jsonl
+*.log
+
+# backup files
+*.bak
+*.bak_*
+*_backup*
+
+# local IDE
+.idea/
+
+# generated outputs
+outputs/
+converted/
+jepa_data/
+jepa_logs/
+jepa_results/
+checkpoints/
+wandb/
+runs/
+
+# model/data/log artifacts
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.npz
+*.npy
+*.pkl
+*.jsonl
+*.log
+
+# backup files
+*.bak
+*.bak_*
+*_backup*
