@@ -7,6 +7,7 @@ import math
 import pathlib
 import re
 import time
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 import imageio
@@ -18,6 +19,9 @@ from openpi_client import image_tools
 from openpi_client import websocket_client_policy as _websocket_client_policy
 import tqdm
 import tyro
+
+
+JEPA_EPISODE_FILE = Path("/tmp/jepa_episode_id")
 
 LIBERO_DUMMY_ACTION = [0.0] * 6 + [-1.0]
 LIBERO_ENV_RESOLUTION = 256  # resolution used to render training data
@@ -113,6 +117,11 @@ def eval_libero(args: Args) -> None:
             action_plan = collections.deque()
 
             obs = env.set_init_state(initial_states[episode_idx])
+
+            # Give each rollout a unique identifier so JEPA data windows
+            # can be separated cleanly across episode boundaries.
+            episode_uid = time.time_ns()
+            JEPA_EPISODE_FILE.write_text(str(episode_uid), encoding="utf-8")
 
             t = 0
             replay_images = []

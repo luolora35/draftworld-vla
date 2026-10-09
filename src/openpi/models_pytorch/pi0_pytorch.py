@@ -439,7 +439,17 @@ class PI0Pytorch(nn.Module):
         dt = -1.0 / num_steps
         dt = torch.tensor(dt, dtype=torch.float32, device=device)
 
+        use_bdia = True
+        gamma = 0.4
+
         x_t = noise
+        x_prev = None
+
+        # Print once to confirm BDIA path is used.
+        if not hasattr(self, "_bdia_printed"):
+            print(f"[BDIA sample_actions] enabled={use_bdia}, gamma={gamma}, num_steps={num_steps}", flush=True)
+            self._bdia_printed = True
+
         time = torch.tensor(1.0, dtype=torch.float32, device=device)
         while time >= -dt / 2:
             expanded_time = time.expand(bsize)
@@ -451,14 +461,28 @@ class PI0Pytorch(nn.Module):
                 expanded_time,
             )
 
-            # Euler step - use new tensor assignment instead of in-place operation
-            x_t = x_t + dt * v_t
+            if (not use_bdia) or (x_prev is None):
+                # First step: original Euler update.
+                x_next = x_t + dt * v_t
+            else:
+                # BDIA-style minimal update.
+                # gamma = 0.0 -> original Euler
+                # gamma closer to 1.0 -> more aggressive bidirectional correction
+                x_next = (
+                        gamma * x_prev
+                        + (1.0 - gamma) * x_t
+                        + (1.0 + gamma) * dt * v_t
+                )
+
+            x_prev = x_t
+            x_t = x_next
             time += dt
+
         return x_t
 
     @torch.no_grad()
     def sample_actions_with_timing(self, device, observation, noise=None, num_steps=10) -> tuple[Tensor, dict[str, float]]:
-        """Eager staged timing for (encoder, vlm prefill, action denoise).
+        """ Eager staged timing for (encoder, vlm prefill, action denoise).
 
         Note: This uses CUDA events for timing when running on CUDA.
         """
@@ -517,16 +541,25 @@ class PI0Pytorch(nn.Module):
         return past_key_values
 
     def _action_stage_impl(self, state, prefix_pad_masks, past_key_values, noise, num_steps: int):
-        # Keep original while-loop semantics (as implemented in sample_actions).
+        # BDIA-style flow solver.
+        # First step uses original Euler update because BDIA needs one historical state.
+
         bsize = state.shape[0]
 
-        dt_f = -1.0 / float(num_steps)          # Python float
+        dt_f = -1.0 / float(num_steps)
         dt = torch.tensor(dt_f, dtype=torch.float32, device=noise.device)
 
+        gamma = 0.4  # BDIA strength. Try 0.5 first.
+
         x_t = noise
+
+        # Historical state for BDIA.
+        x_prev = None
+
         for i in range(int(num_steps)):
-            t_f = 1.0 + i * dt_f                # 1.0, 0.9, ..., 0.1 (num_steps=10)
+            t_f = 1.0 + i * dt_f
             expanded_time = torch.full((bsize,), t_f, dtype=torch.float32, device=noise.device)
+
             v_t = self.denoise_step(
                 state,
                 prefix_pad_masks,
@@ -534,9 +567,32 @@ class PI0Pytorch(nn.Module):
                 x_t,
                 expanded_time,
             )
-            x_t = x_t + dt * v_t
+
+            if x_prev is None:
+                # First step: fall back to original Euler.
+                x_next = x_t + dt * v_t
+            else:
+                # BDIA-style update.
+                #
+                # Original Euler:
+                #   x_next = x_t + dt * v_t
+                #
+                # BDIA uses the previous state x_prev to refine the integration:
+                #   x_next = gamma * x_prev + (1 - gamma) * x_t + (1 + gamma) * dt * v_t
+                #
+                # When gamma = 0, this becomes a conservative one-step variant.
+                # When gamma = 0.5, it uses more bidirectional correction.
+                x_next = (
+                        gamma * x_prev
+                        + (1.0 - gamma) * x_t
+                        + (1.0 + gamma) * dt * v_t
+                )
+
+            x_prev = x_t
+            x_t = x_next
 
         return x_t
+
 
     def denoise_step(
         self,

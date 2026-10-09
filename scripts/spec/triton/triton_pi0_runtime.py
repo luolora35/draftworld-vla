@@ -3463,6 +3463,21 @@ class SpecTritonPolicyRuntime:
                 elif enc.ndim == 3:
                     z_t = enc.mean(dim=1).cpu()
 
+        # Temporary JEPA dump diagnostics.
+        runtime = getattr(session, "_runtime", None) if session is not None else None
+        buffers = getattr(runtime, "buffers", None)
+
+        print(
+            "[JEPA DEBUG]",
+            f"compiled_encoder={type(encoder_runtime).__name__ if encoder_runtime is not None else None}",
+            f"compiled_has_z={getattr(encoder_runtime, '_last_jepa_z_t', None) is not None if encoder_runtime is not None else False}",
+            f"session_none={session is None}",
+            f"runtime={type(runtime).__name__ if runtime is not None else None}",
+            f"buffer_keys={list(buffers.keys()) if isinstance(buffers, dict) else None}",
+            f"final_z_shape={tuple(z_t.shape) if z_t is not None else None}",
+            flush=True,
+        )
+
         if z_t is None:
             if not getattr(self, "_jepa_no_z_reported", False):
                 print("[JEPA DUMP] skip: no z_t", flush=True)
@@ -3495,6 +3510,14 @@ class SpecTritonPolicyRuntime:
         prefix_shape = getattr(encoder_runtime, "_last_jepa_prefix_shape", np.asarray([], dtype=np.int64))
         prefix_mask_shape = getattr(encoder_runtime, "_last_jepa_prefix_mask_shape", np.asarray([], dtype=np.int64))
 
+        episode_file = "/tmp/jepa_episode_id"
+
+        try:
+            with open(episode_file, "r", encoding="utf-8") as f:
+                episode_id = int(f.read().strip())
+        except (OSError, ValueError):
+            return
+
         step = getattr(self, "_jepa_dump_step", 0)
         setattr(self, "_jepa_dump_step", step + 1)
 
@@ -3504,6 +3527,7 @@ class SpecTritonPolicyRuntime:
             z_t=z_np,
             state_t=state_np,
             actions=actions_np,
+            episode_id=np.int64(episode_id),
             prefix_shape=prefix_shape,
             prefix_pad_masks_shape=prefix_mask_shape,
             time=time.time(),
@@ -3795,6 +3819,7 @@ class SpecTritonPolicyRuntime:
         self._maybe_dump_jepa_sample(
             state_t=state,
             actions=actions,
+            session=session,
         )
 
         should_schedule_full_fallback = _should_schedule_full_fallback(

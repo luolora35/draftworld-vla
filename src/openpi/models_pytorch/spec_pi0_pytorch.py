@@ -644,6 +644,46 @@ class SpecPI0Pytorch(PI0Pytorch):
         prefix_att_masks = prefix_att_masks_1d[None, :].expand(bsize, int(prefix_att_masks_1d.shape[0]))
         return prefix_embs, prefix_pad_masks, prefix_att_masks
 
+    def _maybe_dump_jepa_sample(self, prefix_embs, prefix_pad_masks, state_t, actions):
+        import os
+        import time
+        import numpy as np
+        import torch
+
+        dump_dir = os.environ.get("JEPA_DUMP_DIR", "")
+        if not dump_dir:
+            return
+
+        os.makedirs(dump_dir, exist_ok=True)
+
+        with torch.no_grad():
+            valid = prefix_pad_masks.float().unsqueeze(-1)
+            z_t = (prefix_embs.float() * valid).sum(dim=1) / valid.sum(dim=1).clamp_min(1.0)
+
+            z_np = z_t.detach().float().cpu().numpy()
+
+            if isinstance(state_t, torch.Tensor):
+                state_np = state_t.detach().float().cpu().numpy()
+            else:
+                state_np = np.asarray(state_t, dtype=np.float32)
+
+            if isinstance(actions, torch.Tensor):
+                actions_np = actions.detach().float().cpu().numpy()
+            else:
+                actions_np = np.asarray(actions, dtype=np.float32)
+
+        step = getattr(self, "_jepa_dump_step", 0)
+        setattr(self, "_jepa_dump_step", step + 1)
+
+        path = os.path.join(dump_dir, f"sample_{step:06d}.npz")
+        np.savez_compressed(
+            path,
+            z_t=z_np,
+            state_t=state_np,
+            actions=actions_np,
+            time=time.time(),
+        )
+
     def _vlm_prefill_stage_impl(self, prefix_embs, prefix_pad_masks, prefix_att_masks):
         # Real VLM prefill only. Caching / refresh policy is handled at the caller level.
         return super()._vlm_prefill_stage_impl(prefix_embs, prefix_pad_masks, prefix_att_masks)
@@ -895,6 +935,12 @@ class SpecPI0Pytorch(PI0Pytorch):
                 prefix_len=prefix_len,
                 batch_size=bsize,
             )
+            self._maybe_dump_jepa_sample(
+                prefix_embs=prefix_embs,
+                prefix_pad_masks=prefix_pad_masks,
+                state_t=state,
+                actions=actions,
+            )
             if timing is None:
                 return actions
             _populate_full_round_timing(
@@ -951,6 +997,13 @@ class SpecPI0Pytorch(PI0Pytorch):
                 device=device,
             )
             timing["action_verify_ms"] = ms
+
+        self._maybe_dump_jepa_sample(
+            prefix_embs=prefix_embs,
+            prefix_pad_masks=prefix_pad_masks,
+            state_t=state,
+            actions=actions,
+        )
 
         should_schedule_full_fallback = _should_schedule_full_fallback(
             full_fallback=bool(self.spec_args.full_fallback),

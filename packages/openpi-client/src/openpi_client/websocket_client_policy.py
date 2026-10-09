@@ -29,8 +29,8 @@ class WebsocketClientPolicy(_base_policy.BasePolicy):
         host: str = "0.0.0.0",
         port: Optional[int] = None,
         api_key: Optional[str] = None,
-        ping_interval: Optional[float] = 20.0,
-        ping_timeout: Optional[float] = 20.0,
+        ping_interval: Optional[float] = None,
+        ping_timeout: Optional[float] = None,
     ) -> None:
         if host.startswith("ws"):
             self._uri = host

@@ -26,10 +26,18 @@ def main():
     z_list = []
     state_list = []
     actions_list = []
+    episode_list = []
 
     for p in files:
         d = np.load(p)
 
+        if "episode_id" not in d.files:
+            raise RuntimeError(
+                f"Sample does not contain episode_id: {p}. "
+                "Please recollect the dataset."
+            )
+
+        episode_id = int(d["episode_id"])
         z = d["z_t"].astype(np.float32)
         state = d["state_t"].astype(np.float32)
         actions = d["actions"].astype(np.float32)
@@ -46,10 +54,12 @@ def main():
         z_list.append(z)
         state_list.append(state)
         actions_list.append(actions)
+        episode_list.append(episode_id)
 
     z_arr = np.stack(z_list, axis=0)
     state_arr = np.stack(state_list, axis=0)
     actions_arr = np.stack(actions_list, axis=0)
+    episode_arr = np.asarray(episode_list, dtype=np.int64)
 
     K = int(args.future_steps)
 
@@ -57,17 +67,32 @@ def main():
     state_t_out = []
     actions_out = []
     z_future_out = []
+    episode_id_out = []
+    skipped_cross_episode = 0
 
     for i in range(0, len(files) - K):
+        window_episode_ids = episode_arr[i: i + K + 1]
+
+        if not np.all(window_episode_ids == window_episode_ids[0]):
+            skipped_cross_episode += 1
+            continue
+
         z_t_out.append(z_arr[i])
         state_t_out.append(state_arr[i])
         actions_out.append(actions_arr[i, :K, :])
-        z_future_out.append(z_arr[i + 1 : i + 1 + K])
+        z_future_out.append(z_arr[i + 1: i + 1 + K])
+        episode_id_out.append(window_episode_ids[0])
+
+    if not z_t_out:
+        raise RuntimeError(
+            "No valid within-episode windows were generated."
+        )
 
     z_t_out = np.stack(z_t_out, axis=0)
     state_t_out = np.stack(state_t_out, axis=0)
     actions_out = np.stack(actions_out, axis=0)
     z_future_out = np.stack(z_future_out, axis=0)
+    episode_id_out = np.asarray(episode_id_out, dtype=np.int64)
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -78,17 +103,20 @@ def main():
         state_t=state_t_out,
         actions=actions_out,
         z_future=z_future_out,
+        episode_id=episode_id_out,
         raw_files=np.asarray(files),
     )
 
     print("saved:", out_path)
     print("num raw samples:", len(files))
+    print("skipped cross-episode windows:", skipped_cross_episode)
     print("num windows:", z_t_out.shape[0])
     print("z_t:", z_t_out.shape)
     print("state_t:", state_t_out.shape)
     print("actions:", actions_out.shape)
     print("z_future:", z_future_out.shape)
-
+    print("episode_id:", episode_id_out.shape)
+    print("unique episodes:", len(np.unique(episode_id_out)))
 
 if __name__ == "__main__":
     main()
